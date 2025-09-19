@@ -6,9 +6,13 @@ Coldwater fish habitat in Minnesota lakes is threatened by climate change and nu
 
 # UMN Research Team 
 Dr. Gretchen Hansen (PI)
+
 Micheal McGuigan
+
 Naomi Blinick 
+
 Denver Link
+
 Dr. Cam Mosley
 
 # Funding
