@@ -41,7 +41,8 @@ BT4_buoy_formatted$Variable <- word(BT4_buoy_formatted$Variable, 1, -2, sep = '_
 BT4_buoy_formatted$Variable[BT4_buoy_formatted$Variable == 'Temp_bot'] <- 'Temp'
 BT4_buoy_formatted$Depth <- as.numeric(BT4_buoy_formatted$Depth)  
 
-plot(BT4_buoy_formatted$Value[BT4_buoy_formatted$Variable == 'Temp' & BT4_buoy_formatted$Depth == 1.5], type = 'l', col = 'purple', ylim = c(0,26))
+plot(BT4_buoy_formatted$Value[BT4_buoy_formatted$Variable == 'Temp' & BT4_buoy_formatted$Depth == 1.5], type = 'l', col = 'purple', ylim = c(0,26),
+     ylab = "Temperature and DO", xlab = "Time")
 lines(BT4_buoy_formatted$Value[BT4_buoy_formatted$Variable == 'Temp' & BT4_buoy_formatted$Depth == 2.5], col = 'blue')
 lines(BT4_buoy_formatted$Value[BT4_buoy_formatted$Variable == 'Temp' & BT4_buoy_formatted$Depth == 3.5], col = 'green')
 lines(BT4_buoy_formatted$Value[BT4_buoy_formatted$Variable == 'Temp' & BT4_buoy_formatted$Depth == 4.5], col = 'yellow')
