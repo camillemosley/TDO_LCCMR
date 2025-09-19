@@ -153,4 +153,24 @@ BT5_buoy2019_formatted <- BT5_buoy2019_formatted %>%
 # want to sort by date, time, variable, and depth, but i need to fix the date formatting first (#fml)
 
 
+# Richie lake ----
+
+#format dates for ploting
+#paste time and date columns 
+Richie$DateTime <-paste(Richie$Date,Richie$Time)
+#make date object of column
+Richie$DateTime<-as.POSIXct(Richie$DateTime, format= "%m/%d/%Y %H:%M:%S") 
+#make ggplot showing 2 variables over time 
+ggplot(Richie, aes(x = DateTime)) +
+  geom_line(aes(y = Temperature, color = "Temperature")) +
+  geom_line(aes(y = Dissolved.Oxygen, color = "Dissolved Oxygen")) +
+  labs(title = "Temp and DO for Richie Lake", color = "Legend") +
+  scale_y_continuous(
+    name = "Temperature",
+    sec.axis = sec_axis(~ . * 100, name = "Dissolved Oxygen")
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Temperature" = "#CC6666",
+                                "Dissolved Oxygen" = "#9999CC"))
+
 
