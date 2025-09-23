@@ -191,3 +191,22 @@ ggplot(Sargent, aes(x = DateTime)) +
   theme_minimal() +
   scale_color_manual(values = c("Temperature" = "#CC6666",
                                 "Dissolved Oxygen" = "#9999CC"))
+
+# Desor lake ----
+
+DesorDO$DateTime <-paste(DesorDO$Date,DesorDO$Time)
+#make date object of column
+DesorDO$DateTime<-as.POSIXct(DesorDO$DateTime, format= "%m/%d/%Y %H:%M:%S") 
+#make ggplot showing 2 variables over time 
+ggplot(DesorDO, aes(x = DateTime)) +
+  geom_line(aes(y = Temperature, color = "Temperature")) +
+  geom_line(aes(y = Dissolved.Oxygen, color = "Dissolved Oxygen")) +
+  labs(title = "Temp and DO for Desor Lake", color = "Legend") +
+  scale_y_continuous(
+    name = "Temperature",
+    sec.axis = sec_axis(~ ., name = "Dissolved Oxygen")
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Temperature" = "#CC6666",
+                                "Dissolved Oxygen" = "#9999CC"))
+
