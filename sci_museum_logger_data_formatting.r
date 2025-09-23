@@ -210,7 +210,7 @@ ggplot(DesorDO, aes(x = DateTime)) +
   scale_color_manual(values = c("Temperature" = "#CC6666",
                                 "Dissolved Oxygen" = "#9999CC"))
 
-# Wilderness Lakes summer 2023 readings ----
+# Wilderness Lakes summer 2022 readings ----
 # lakes in this file: Burnt , Dunnigan , E.Twin , Elbow , Finger , Flame , Smoke , W.Twin 
 Burnt<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="Burnt",]
 Dunnigan<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="Dunnigan",]
@@ -253,5 +253,33 @@ ggplot(Dunnigan, aes(x = datetime)) +
   scale_color_manual(values = c("Temperature" = "#CC6666",
                                 "Dissolved Oxygen" = "#9999CC"))
 
+# Smoke ----
+#has a logger for top and bottom of lake + 2023 summer data from joint csv 
+#join data 
 
+Smoke_top$datetime<-as.POSIXct(Smoke_top$Date.Time..GMT.05.00, format= "%m/%d/%Y %H:%M") 
+#make ggplot showing 2 variables over time 
+ggplot(Smoke_top, aes(x = datetime)) +
+  geom_line(aes(y = Temp...C..LGR.S.N..21118676..SEN.S.N..21118676..LBL..temp., color = "Temperature")) +
+  geom_line(aes(y = DO.Adj.Conc..mg.L..LGR.S.N..21118676., color = "Dissolved Oxygen")) +
+  labs(title = "Temp and DO for Smoke Lake", color = "Legend") +
+  scale_y_continuous(
+    name = "Temperature",
+    sec.axis = sec_axis(~ ., name = "Dissolved Oxygen")
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Temperature" = "#CC6666",
+                                "Dissolved Oxygen" = "#9999CC"))
+Smoke$datetime<-as.POSIXct(Smoke$datetime, format= "%Y-%m-%d %H:%M:%S") 
+ggplot(Smoke, aes(x = datetime)) +
+  geom_line(aes(y = surface_temp, color = "Temperature")) +
+  geom_line(aes(y = surface_DO_adj_conc, color = "Dissolved Oxygen")) +
+  labs(title = "Temp and DO for Smoke Lake", color = "Legend") +
+  scale_y_continuous(
+    name = "Temperature",
+    sec.axis = sec_axis(~ ., name = "Dissolved Oxygen")
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Temperature" = "#CC6666",
+                                "Dissolved Oxygen" = "#9999CC"))
 
