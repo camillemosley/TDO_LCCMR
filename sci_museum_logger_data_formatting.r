@@ -210,3 +210,48 @@ ggplot(DesorDO, aes(x = DateTime)) +
   scale_color_manual(values = c("Temperature" = "#CC6666",
                                 "Dissolved Oxygen" = "#9999CC"))
 
+# Wilderness Lakes summer 2023 readings ----
+# lakes in this file: Burnt , Dunnigan , E.Twin , Elbow , Finger , Flame , Smoke , W.Twin 
+Burnt<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="Burnt",]
+Dunnigan<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="Dunnigan",]
+E.Twin<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="E.Twin",]
+Elbow<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="Elbow",]
+Finger<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="Finger",]
+Flame<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="Flame",]
+Smoke<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="Smoke",]
+W.Twin<-WL_summer23DO_topbot[WL_summer23DO_topbot$site=="W.Twin",]
+
+#Burnt ---
+#make date object of column
+Burnt$datetime<-as.POSIXct(Burnt$datetime, format= "%Y-%m-%d %H:%M:%S") 
+#make ggplot showing 2 variables over time 
+ggplot(Burnt, aes(x = datetime)) +
+  geom_line(aes(y = surface_temp, color = "Temperature")) +
+  geom_line(aes(y = surface_DO_adj_conc, color = "Dissolved Oxygen")) +
+  labs(title = "Temp and DO for Burnt Lake", color = "Legend") +
+  scale_y_continuous(
+    name = "Temperature",
+    sec.axis = sec_axis(~ ., name = "Dissolved Oxygen")
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Temperature" = "#CC6666",
+                                "Dissolved Oxygen" = "#9999CC"))
+
+#Dunnigan ----
+
+Dunnigan$datetime<-as.POSIXct(Dunnigan$datetime, format= "%Y-%m-%d %H:%M:%S") 
+#make ggplot showing 2 variables over time 
+ggplot(Dunnigan, aes(x = datetime)) +
+  geom_line(aes(y = surface_temp, color = "Temperature")) +
+  geom_line(aes(y = surface_DO_adj_conc, color = "Dissolved Oxygen")) +
+  labs(title = "Temp and DO for Dunnigan Lake", color = "Legend") +
+  scale_y_continuous(
+    name = "Temperature",
+    sec.axis = sec_axis(~ ., name = "Dissolved Oxygen")
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Temperature" = "#CC6666",
+                                "Dissolved Oxygen" = "#9999CC"))
+
+
+
