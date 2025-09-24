@@ -283,3 +283,17 @@ ggplot(Smoke, aes(x = datetime)) +
   scale_color_manual(values = c("Temperature" = "#CC6666",
                                 "Dissolved Oxygen" = "#9999CC"))
 
+
+# Finger -----
+Finger$datetime<-as.POSIXct(Finger$datetime, format= "%Y-%m-%d %H:%M:%S") 
+ggplot(Finger, aes(x = datetime)) +
+  geom_line(aes(y = surface_temp, color = "Temperature")) +
+  geom_line(aes(y = surface_DO_adj_conc, color = "Dissolved Oxygen")) +
+  labs(title = "Temp and DO for Finger Lake", color = "Legend") +
+  scale_y_continuous(
+    name = "Temperature",
+    sec.axis = sec_axis(~ ., name = "Dissolved Oxygen")
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Temperature" = "#CC6666",
+                                "Dissolved Oxygen" = "#9999CC"))
