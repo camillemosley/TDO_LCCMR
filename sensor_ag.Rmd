@@ -103,7 +103,7 @@ dnr_temp_trial <- dnr_temp %>%
                                ": logger_model: ",
                                logger_model),
          location_notes = paste0("deployment_number: ", deployment),
-         original_file = "dnr_temp.csv") %>% 
+         original_file = paste0("temp_data.csv", " ;", "logger_metadata.csv")) %>% 
   select(lake_name = basin_name,
          lake_id = basin_id,
          station_id = station,
@@ -115,7 +115,7 @@ dnr_temp_trial <- dnr_temp %>%
          logger_notes,
          survey_notes = notes,
          location_notes,
-         flag = flaggross,
+         flag_temp = flaggross,
          original_file)
 rm(dnr_temp, dnr_metadata)
 
@@ -127,32 +127,45 @@ dnr_do <- dnr_do %>%
                                        "logger_model"),
             relationship = "many-to-one")
 
-dnr_temp_trial <- dnr_temp %>%
+dnr_do_trial <- dnr_do %>%
   #create units column
   #create a logger notes column as an aggregation of a couple of columns,
   #rename the metadata notes column to survey notes
   #rename columns for aggregation
   #location notes as deployment number
   mutate(depth_units = "m",
+         do_units = "mgl",
          temp_units = "c",
          logger_notes = paste0("serial_number: ",
                                serial_number,
                                ": logger_model: ",
                                logger_model),
          location_notes = paste0("deployment_number: ", deployment),
-         original_file = "dnr_temp.csv") %>% 
+         original_file = paste0("do_data.csv", " ;", "logger_metadata.csv")) %>% 
   select(lake_name = basin_name,
          lake_id = basin_id,
          station_id = station,
          date_time = standardized_date_time,
          depth = depth_m,
          depth_units,
+         do = do_mgl,
+         do_units,
          temp = temp_c,
          temp_units,
          logger_notes,
          survey_notes = notes,
          location_notes,
-         flag = flaggross,
+         flag_do = flaggross_do,
+         flag_temp = flaggross_temp,
          original_file)
+rm(dnr_do, dnr_metadata_notes)
+
+#join any rows of a common lake, station, depth, time for temp/do
+check <- dnr_do_trial %>% 
+  inner_join(dnr_temp_trial, by = c("lake_id", "station_id", "depth", "date_time"), suffix = c("_do", "_temp")) %>% 
+  select(lake_id, station_id, depth, date_time, logger_notes_do, logger_notes_temp, location_notes_do, location_notes_temp, temp_do, temp_temp)
+
+check  %>% 
+  distinct(lake_id, station_id)
 ```
 
