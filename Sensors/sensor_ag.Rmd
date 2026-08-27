@@ -103,7 +103,7 @@ dnr_temp_trial <- dnr_temp %>%
                                ": logger_model: ",
                                logger_model),
          location_notes = paste0("deployment_number: ", deployment),
-         original_file = "dnr_temp.csv") %>% 
+         original_file = paste0("temp_data.csv", " ;", "logger_metadata.csv")) %>% 
   select(lake_name = basin_name,
          lake_id = basin_id,
          station_id = station,
@@ -115,7 +115,7 @@ dnr_temp_trial <- dnr_temp %>%
          logger_notes,
          survey_notes = notes,
          location_notes,
-         flag = flaggross,
+         flag_temp = flaggross,
          original_file)
 rm(dnr_temp, dnr_metadata)
 
@@ -127,32 +127,427 @@ dnr_do <- dnr_do %>%
                                        "logger_model"),
             relationship = "many-to-one")
 
-dnr_temp_trial <- dnr_temp %>%
+dnr_do_trial <- dnr_do %>%
   #create units column
   #create a logger notes column as an aggregation of a couple of columns,
   #rename the metadata notes column to survey notes
   #rename columns for aggregation
   #location notes as deployment number
   mutate(depth_units = "m",
+         do_units = "mgl",
          temp_units = "c",
          logger_notes = paste0("serial_number: ",
                                serial_number,
                                ": logger_model: ",
                                logger_model),
          location_notes = paste0("deployment_number: ", deployment),
-         original_file = "dnr_temp.csv") %>% 
+         original_file = paste0("do_data.csv", " ;", "logger_metadata.csv")) %>% 
   select(lake_name = basin_name,
          lake_id = basin_id,
          station_id = station,
          date_time = standardized_date_time,
          depth = depth_m,
          depth_units,
+         do = do_mgl,
+         do_units,
          temp = temp_c,
          temp_units,
          logger_notes,
          survey_notes = notes,
          location_notes,
-         flag = flaggross,
+         flag_do = flaggross_do,
+         flag_temp = flaggross_temp,
          original_file)
+rm(dnr_do, dnr_metadata_notes)
+
+#join any rows of a common lake, station, depth, time for temp/do
+check <- dnr_do_trial %>% 
+  inner_join(dnr_temp_trial, by = c("lake_id", "station_id", "depth", "date_time"), suffix = c("_do", "_temp")) %>% 
+  select(lake_id, station_id, depth, date_time, logger_notes_do, logger_notes_temp, location_notes_do, location_notes_temp, temp_do, temp_temp)
+
+check  %>% 
+  distinct(lake_id, station_id)
 ```
 
+# adding some arrow friendly calculations for Mike
+The goal here is to make some arrow friendly code that can visualize lake profiles (interpolated across depths) that has additional information displayed - tracking the depth of a certain temperature over time. 
+
+In talking to Mike, he suggested that he interpolates between depth sensor with a linear line for every 0.1 m. A linear fit is probably fine because sensor have been positioned carefully to avoid missing a "curve", but that still can't be ruled out. We should consider a better fitting strategy.
+
+To make this work with arrow, I have come up with a general workflow:
+1. read in standardized parquet 
+2. filter to lakes and time periods of interest 
+   -this can be generally as large as your memory will allow, but it probably just makes sense to limit it to what you are plotting at the given moment - looking at a two year stretch in carols VS all lakes and years
+3a. isotherm analysis 
+     - direct interpolation between observations where the temperature of interest is "sandwiched" 
+     - create isotherm depth over time (rows are date-time, column is "depth at temp X", value is depth)
+3b. heat map data
+    -temporary 0.1 meter depth interpolation (making sure we filter for place and time we are interested in)
+    - vis
+```{r}
+library(tidyverse)
+library(arrow)
+library(lubridate)
+
+# creating "fake" data
+#test on fake data
+test_profile <- tibble(
+  lake = c(
+    # Carlos - 12:00
+    rep("carlos", 5),
+    # Carlos - 12:10
+    rep("carlos", 5),
+    # Ten Mile - 12:00
+    rep("tenmile", 6),
+    # Ten Mile - 12:10
+    rep("tenmile", 6)
+  ),
+  
+  datetime = c(
+    # Carlos - 12:00
+    rep(as.POSIXct("2026-07-01 12:00:00"), 5),
+    # Carlos - 12:10
+    rep(as.POSIXct("2026-07-01 12:10:00"), 5),
+    # Ten Mile - 12:00
+    rep(as.POSIXct("2026-07-01 12:00:00"), 6),
+    # Ten Mile - 12:10
+    rep(as.POSIXct("2026-07-01 12:10:00"), 6)
+  ),
+  
+  depth_m = c(
+    # Carlos - 12:00
+    1, 3, 5, 8, 11,
+    
+    # Carlos - 12:10
+    1, 3, 5, 8, 11,
+    
+    # Ten Mile - 12:00
+    1, 3, 6, 9, 11, 15,
+    
+    # Ten Mile - 12:10
+    1, 3, 6, 9, 11, 15
+  ),
+  
+  temp_c = c(
+    # Carlos - 12:00
+    22, 21, 18, 10, 7,
+    
+    # Carlos - 12:10
+    22, 20, 17, 9, 6,
+    
+    # Ten Mile - 12:00
+    23, 21, 18, 11, 7, 4,
+    
+    # Ten Mile - 12:10
+    23, 21, 17, 10, 6, 3
+  )
+)
+
+#just shows how to convert to a parquet
+write_parquet(test_profile,
+              "test_profile.parquet")
+rm(test_profile)
+
+#lets work with it in parquet form
+test_profile <- open_dataset("test_profile.parquet")
+names(test_profile)
+
+
+# filter to lakes and times of interest 
+all_data <- test_profile %>% 
+  #two lakes in our test and just finding all times in july - we really only have one date but we should find them
+  filter(lake %in% c("carlos", "tenmile"),
+         datetime >= as.POSIXct("2026-07-01 12:00:00"),
+         datetime <= as.POSIXct("2026-07-31 18:00:00")
+         ) %>% 
+  select(
+    lake,
+    datetime,
+    depth_m,
+    temp_c
+  ) %>% 
+  collect()
+
+#only carlos at noon on 7/1
+carlos_noon <- test_profile %>% 
+  #two lakes in our test and just finding all times in july - we really only have one date but we should find them
+  filter(lake %in% c("carlos"),
+         datetime >= as.POSIXct("2026-07-01 12:00:00"),
+         datetime <= as.POSIXct("2026-07-01 12:01:00")
+         ) %>% 
+  select(
+    lake,
+    datetime,
+    depth_m,
+    temp_c
+  ) %>% 
+  collect()
+
+#### function for finding depth of some temperatures 
+temps_to_track <- c(10, 15, 20)
+
+find_isotherms <- function(data, target_temps) {
+  data <- data %>% 
+    #make sure no NAs in depth or temp data
+    filter(!is.na(depth_m),
+           !is.na(temp_c)) %>% 
+    #arrage data by depth
+    arrange(depth_m)
+  
+  #we need at least two observations to interpolate 
+  if (nrow(data) < 2) {
+    return(tibble())
+  }
+  
+  #loop through each temp we are interested in - run code once for each temp listed then stack the results together
+  map_dfr(target_temps, function(target_temp) {
+    
+    profile <- data %>% 
+      #take the difference between target and observed temp
+      #we will then know which two observations to use to generate our linear "prediction"
+      #lead give the value from the next row 
+      mutate(
+        temp_diff = temp_c - target_temp,
+        temp_diff_next = lead(temp_diff),
+        depth_next = lead(depth_m),
+        temp_next = lead(temp_c)
+      ) %>% 
+      #find where the target temperature is crossed, we want where the temp diff is postive and the next is negative
+      #a pretty math hacky way to do this is just find if you multiply two temp diffs together if the product is negative 
+      filter(
+        !is.na(temp_diff_next),
+        temp_diff * temp_diff_next <= 0,
+        temp_next != temp_c
+      )
+    
+    #this is insurance if the temp we desire isn't present, it will just end up NA
+    if (nrow(profile) == 0) {
+      return(tibble(
+        target_temperature = target_temp,
+        isotherm_depth = NA_real_
+      ))
+    }
+    
+    #this takes the first crossing point, we should really only ever have one anyway THEN the meat and potatoes
+    #our calculation basically is: what fraction of the way from X temp to Y temp do we need to go to reach the desired temp
+    profile %>% 
+    slice(1) %>% 
+    transmute(
+      target_temperature = target_temp,
+      
+      isotherm_depth = 
+        depth_m +
+        (target_temp - temp_c) /
+        (temp_next - temp_c) *
+        (depth_next - depth_m)
+    )
+  })
+}
+
+
+
+#run the function - we must group by lake and time
+#here we can change the data to meet what we are looking for
+isotherms_all <- all_data %>% 
+  group_by(
+    lake, 
+    datetime
+  ) %>% 
+  group_modify( ~ find_isotherms(
+    .x,
+    target_temps = temps_to_track
+  )) %>% 
+  ungroup()
+
+isotherms_carlos_noon <- carlos_noon %>% 
+  group_by(
+    lake, 
+    datetime
+  ) %>% 
+  group_modify( ~ find_isotherms(
+    .x,
+    target_temps = temps_to_track
+  )) %>% 
+  ungroup()
+
+
+all_data %>% 
+  ggplot() +
+  geom_point(aes(temp_c, depth_m)) +
+  geom_line(aes(temp_c, depth_m, group = datetime)) +
+  geom_smooth(aes(temp_c, depth_m, group = datetime)) +
+  geom_point(data = isotherms_all, aes(target_temperature, isotherm_depth), color = "red") +
+  scale_y_reverse() +
+  facet_wrap(~lake)
+# we can see here that we calculated the depth at a temperature on a linear line between two points with data from two different lakes that have a different number of sensors at different depths 
+
+#carlos only
+carlos_noon %>% 
+  ggplot() +
+  geom_point(aes(temp_c, depth_m)) +
+  geom_line(aes(temp_c, depth_m, group = datetime)) +
+  geom_smooth(aes(temp_c, depth_m, group = datetime)) +
+  geom_point(data = isotherms_carlos_noon, aes(target_temperature, isotherm_depth), color = "red") +
+  scale_y_reverse() +
+  facet_wrap(~lake)
+
+
+###########################################################################
+#okay now lets do the heat map 
+interpolate_profile <- function(data, depth_grid) {
+  
+  #basic cleaning
+  data <- data %>%
+    filter(
+      !is.na(depth_m),
+      !is.na(temp_c)
+    ) %>%
+    arrange(depth_m)
+  
+  #need two observations 
+  if (nrow(data) < 2) {
+    return(tibble())
+  }
+  
+  # Remove duplicate depths
+  data <- data %>%
+    distinct(depth_m, .keep_all = TRUE)
+  
+  # Linear interpolation
+  # rule = 1 means don't extrapolate beyond observed depths
+  approx(
+    x = data$depth_m,
+    y = data$temp_c,
+    xout = depth_grid,
+    method = "linear",
+    rule = 1
+  ) %>%
+    as_tibble() %>%
+    rename(
+      depth_m = x,
+      temp_c = y
+    )
+}
+
+#set the depth grid to go from max depth to 0 by 0.1
+# i am reusing the test data from above
+heatmap_data <- all_data %>%
+  group_by(lake, datetime) %>%
+  group_modify(
+    ~ interpolate_profile(
+        .x,
+        depth_grid = seq(
+          0,
+          max(.x$depth_m, na.rm = TRUE),
+          by = 0.1
+        )
+      )
+  ) %>%
+  ungroup()
+
+heatmap_data_carlos <- carlos_noon %>% 
+  group_by(lake, datetime) %>%
+  group_modify(
+    ~ interpolate_profile(
+        .x,
+        depth_grid = seq(
+          0,
+          max(.x$depth_m, na.rm = TRUE),
+          by = 0.1
+        )
+      )
+  ) %>%
+  ungroup()
+
+#lets plot the heatmap and dots together
+ggplot() +
+  geom_raster(data = heatmap_data,
+  aes(
+    x = datetime,
+    y = depth_m,
+    fill = temp_c
+  )) +
+  
+  geom_line(
+    data = isotherms_all,
+    aes(
+      x = datetime,
+      y = isotherm_depth,
+      color = factor(target_temperature),
+      group = interaction(lake, target_temperature)
+    ),
+    linewidth = 0.8
+  ) +
+  
+  scale_y_reverse() +
+  
+  scale_fill_viridis_c(
+    name = "Temperature (°C)",
+    na.value = "white"
+  ) +
+  
+  scale_color_manual(
+    name = "Isotherm (°C)",
+    values = c(
+      "10" = "white",
+      "15" = "black",
+      "20" = "red"
+    )
+  ) +
+  
+  labs(
+    x = "Date",
+    y = "Depth (m)",
+    title = "Lake temperature profile"
+  ) +
+  
+  theme_bw() +
+  facet_wrap(~lake)
+
+#now only carlos
+ggplot() +
+  geom_raster(data = heatmap_data_carlos,
+  aes(
+    x = datetime,
+    y = depth_m,
+    fill = temp_c
+  )) +
+  
+  geom_line(
+    data = isotherms_carlos_noon,
+    aes(
+      x = datetime,
+      y = isotherm_depth,
+      color = factor(target_temperature),
+      group = interaction(lake, target_temperature)
+    ),
+    linewidth = 0.8
+  ) +
+  
+  scale_y_reverse() +
+  
+  scale_fill_viridis_c(
+    name = "Temperature (°C)",
+    na.value = "white"
+  ) +
+  
+  scale_color_manual(
+    name = "Isotherm (°C)",
+    values = c(
+      "10" = "white",
+      "15" = "black",
+      "20" = "red"
+    )
+  ) +
+  
+  labs(
+    x = "Date",
+    y = "Depth (m)",
+    title = "Lake temperature profile"
+  ) +
+  
+  theme_bw() +
+  facet_wrap(~lake)
+```
+
+I left off after creating the heat map. We will need to explore how much data we can pull in and still create the heat maps plots - we probably only viz one year at a time? that would be taken care of in the filtering prior to pulling data in
