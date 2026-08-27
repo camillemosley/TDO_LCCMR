@@ -1,0 +1,158 @@
+---
+title: "sensor_ag"
+author: "Denver Link"
+date: "2026-06-16"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# library
+```{r}
+library(tidyverse)
+```
+
+# data
+```{r}
+#mn DNR
+dnr_do <- read_csv(file.path("G:",
+                         "Shared drives",
+                         "Hansen Lab",
+                         "RESEARCH PROJECTS",
+                         "LCCMR Coldwater Habitat Watersheds - MM",
+                         "Data",
+                         "Raw data",
+                         "Continuous temp DO logger data",
+                         "Sentinel Lakes 2026-03-10",
+                         "do_data.csv"))
+
+dnr_temp <- read_csv(file.path("G:",
+                         "Shared drives",
+                         "Hansen Lab",
+                         "RESEARCH PROJECTS",
+                         "LCCMR Coldwater Habitat Watersheds - MM",
+                         "Data",
+                         "Raw data",
+                         "Continuous temp DO logger data",
+                         "Sentinel Lakes 2026-03-10",
+                         "temp_data.csv"))
+
+dnr_metadata = read_csv(file.path("G:",
+                         "Shared drives",
+                         "Hansen Lab",
+                         "RESEARCH PROJECTS",
+                         "LCCMR Coldwater Habitat Watersheds - MM",
+                         "Data",
+                         "Raw data",
+                         "Continuous temp DO logger data",
+                         "Sentinel Lakes 2026-03-10",
+                         "logger_metadata.csv"))
+
+#voya
+temp_21 <- read_csv(file.path("G:",
+                         "Shared drives",
+                         "Hansen Lab",
+                         "RESEARCH PROJECTS",
+                         "LCCMR Coldwater Habitat Watersheds - MM",
+                         "Data",
+                         "Raw data",
+                         "Continuous temp DO logger data",
+                         "VOYA 2026-03-24",
+                         "VOYA_temp_21.csv"))
+
+temp_22 <- read_csv(file.path("G:",
+                         "Shared drives",
+                         "Hansen Lab",
+                         "RESEARCH PROJECTS",
+                         "LCCMR Coldwater Habitat Watersheds - MM",
+                         "Data",
+                         "Raw data",
+                         "Continuous temp DO logger data",
+                         "VOYA 2026-03-24",
+                         "VOYA_temp_22.csv"))
+```
+
+# data ag dnr
+```{r}
+#grab the notes from the metadatas
+dnr_metadata_notes <- dnr_metadata %>% 
+  select(basin_id, 
+         station,
+         deployment,
+         logger_model,
+         notes)
+
+#add the notes to the temp data
+dnr_temp <- dnr_temp %>% 
+  left_join(dnr_metadata_notes, by = c("basin_id",
+                                       "station",
+                                       "deployment",
+                                       "logger_model"),
+            relationship = "many-to-one")
+
+dnr_temp_trial <- dnr_temp %>%
+  #create units column
+  #create a logger notes column as an aggregation of a couple of columns,
+  #rename the metadata notes column to survey notes
+  #rename columns for aggregation
+  #location notes as deployment number
+  mutate(depth_units = "m",
+         temp_units = "c",
+         logger_notes = paste0("serial_number: ",
+                               serial_number,
+                               ": logger_model: ",
+                               logger_model),
+         location_notes = paste0("deployment_number: ", deployment),
+         original_file = "dnr_temp.csv") %>% 
+  select(lake_name = basin_name,
+         lake_id = basin_id,
+         station_id = station,
+         date_time = standardized_date_time,
+         depth = depth_m,
+         depth_units,
+         temp = temp_c,
+         temp_units,
+         logger_notes,
+         survey_notes = notes,
+         location_notes,
+         flag = flaggross,
+         original_file)
+rm(dnr_temp, dnr_metadata)
+
+#do
+dnr_do <- dnr_do %>% 
+  left_join(dnr_metadata_notes, by = c("basin_id",
+                                       "station",
+                                       "deployment",
+                                       "logger_model"),
+            relationship = "many-to-one")
+
+dnr_temp_trial <- dnr_temp %>%
+  #create units column
+  #create a logger notes column as an aggregation of a couple of columns,
+  #rename the metadata notes column to survey notes
+  #rename columns for aggregation
+  #location notes as deployment number
+  mutate(depth_units = "m",
+         temp_units = "c",
+         logger_notes = paste0("serial_number: ",
+                               serial_number,
+                               ": logger_model: ",
+                               logger_model),
+         location_notes = paste0("deployment_number: ", deployment),
+         original_file = "dnr_temp.csv") %>% 
+  select(lake_name = basin_name,
+         lake_id = basin_id,
+         station_id = station,
+         date_time = standardized_date_time,
+         depth = depth_m,
+         depth_units,
+         temp = temp_c,
+         temp_units,
+         logger_notes,
+         survey_notes = notes,
+         location_notes,
+         flag = flaggross,
+         original_file)
+```
+
