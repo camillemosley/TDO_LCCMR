@@ -13,175 +13,6 @@ editor_options:
 library(tidyverse)
 library(chromote)
 library(readr)
-```
-
-# Function for extracting
-
-This uses a headless browser to basically open the webpage, navigate to a station webpage and download the data. The shiny app can be super slow (sometimes taking over 2 min to open for a lake). If 180 seconds is too slow to have the lake page open (download disabled remains TRUE), you may have to increase the time so that it allows the webpage to open properly. 
-```{r}
-download_station_profile <- function(
-    station_id,
-    b,
-    download_dir = tempdir(),
-    load_timeout = 250,
-    download_timeout = 60
-) {
-
-  message("\nStarting station: ", station_id)
-
-  # Build station URL
-  url <- paste0(
-    "https://dnr-wisconsin.shinyapps.io/WaterExplorer/?stationid=",
-    station_id
-  )
-
-  # Navigate to station
-  b$Page$navigate(url)
-
-  # Wait for station data to load
-  button_enabled <- FALSE
-
-  for (i in seq_len(ceiling(load_timeout / 5))) {
-
-    Sys.sleep(5)
-
-    button_disabled <- b$Runtime$evaluate(
-      "document.querySelector('#DLRawProfData')
-        ?.classList.contains('disabled')",
-      returnByValue = TRUE
-    )$result$value
-
-    elapsed <- i * 5
-
-    message(
-      "Station ", station_id,
-      " | Elapsed: ", elapsed,
-      " seconds | Download disabled: ", button_disabled
-    )
-
-    if (identical(button_disabled, FALSE)) {
-      button_enabled <- TRUE
-      break
-    }
-  }
-
-  if (!button_enabled) {
-    stop("Station ", station_id, " did not finish loading.")
-  }
-
-  # Extract download URL
-  download_url <- b$Runtime$evaluate(
-    "document.querySelector('#DLRawProfData').href",
-    returnByValue = TRUE
-  )$result$value
-
-  if (is.null(download_url) || !nzchar(download_url)) {
-    stop("Could not find download URL for station ", station_id)
-  }
-
-  # Expected download filename
-  file_path <- file.path(
-    download_dir,
-    paste0(station_id, "_profile.csv")
-  )
-
-  # Remove an old download if one exists
-  if (file.exists(file_path)) {
-    unlink(file_path)
-  }
-
-  # Initiate download
-  b$Page$navigate(download_url)
-
-  # Wait for CSV to finish downloading
-  download_complete <- FALSE
-
-  for (i in seq_len(ceiling(download_timeout))) {
-
-    Sys.sleep(1)
-
-    if (
-      file.exists(file_path) &&
-      !file.exists(paste0(file_path, ".crdownload"))
-    ) {
-      download_complete <- TRUE
-      break
-    }
-  }
-
-  if (!download_complete) {
-    stop("Download failed or timed out for station ", station_id)
-  }
-
-  # Read data and add station ID
-  profile_data <- read_csv(
-    file_path,
-    show_col_types = FALSE
-  ) %>%
-    mutate(station_id = station_id)
-
-  message(
-    "Successfully downloaded station ",
-    station_id,
-    " (", nrow(profile_data), " rows)"
-  )
-
-  return(profile_data)
-}
-```
-
-# run for lakes 
-```{r}
-station_ids <- c(133318, 613121)
-
-# Start browser session
-b <- ChromoteSession$new()
-
-# Set download behavior BEFORE downloading
-b$Browser$setDownloadBehavior(
-  behavior = "allow",
-  downloadPath = tempdir()
-)
-
-# Download each station
-profile_list <- lapply(
-  station_ids,
-  download_station_profile,
-  b = b
-)
-
-# Combine into one dataframe
-all_profiles <- bind_rows(
-  lapply(profile_list, function(x) {
-    x %>%
-      mutate(
-        `DISSOLVED OXYGEN FIELD` =
-          as.character(`DISSOLVED OXYGEN FIELD`)
-      )
-  })
-)
-
-# Close browser
-b$close()
-
-glimpse(all_profiles)
-
-# Number of records per station
-all_profiles %>%
-  count(station_id)
-
-# Check downloaded files
-list.files(
-  tempdir(),
-  pattern = "profile\\.csv$",
-  full.names = TRUE
-)
-```
-
-# Looking at this link: 
-https://apps.dnr.wi.gov/lakes/waterquality/
-```{r}
-library(chromote)
 library(rvest)
 library(xml2)
 library(dplyr)
@@ -189,9 +20,12 @@ library(purrr)
 library(stringr)
 library(readxl)
 library(httr2)
-library(readr)
 library(tibble)
+```
 
+# Looking at this link: 
+https://apps.dnr.wi.gov/lakes/waterquality/
+```{r}
 home_url <- "https://apps.dnr.wi.gov/lakes/waterquality/"
 
 # Read the main page
@@ -349,6 +183,8 @@ get_county_stations <- function(county_url, county, b,
     dplyr::mutate(county = county, .before = 1)
 }
 
+b <- ChromoteSession$new()
+
 adams_test <- get_county_stations(
   county_url = county_links$county_url[1],
   county = county_links$county[1],
@@ -397,13 +233,6 @@ wi_stations <- read_csv("WI_DNR_Statewide_Station_Inventory.csv")
 
 ###########################################################################
 #now look for useable data
-library(httr2)
-library(readxl)
-library(readr)
-library(dplyr)
-library(stringr)
-library(purrr)
-library(tibble)
 
 check_station_download <- function(
     station_id,
@@ -605,11 +434,208 @@ tibble(
 )
 }
 
-#run a test on a couple of stations
-test_downloads <- map_dfr(
-  c("013159", "013037"),
-  ~ check_station_download(.x)
+station_ids <- unique(wi_stations$station_id)
+
+download_results <- map_dfr(
+  station_ids,
+  function(id) {
+
+    result <- check_station_download(id)
+
+    Sys.sleep(0.25)
+
+    result
+  }
 )
-test_downloads
+
+download_results %>%
+  count(status)
+
+download_results %>%
+  filter(status == "downloaded") %>%
+  summarise(
+    stations_downloaded = n(),
+    stations_with_temperature = sum(has_temperature_data),
+    stations_with_dissolved_oxygen = sum(has_dissolved_oxygen_data),
+    stations_with_both = sum(
+      has_temperature_data & has_dissolved_oxygen_data
+    )
+  )
+
+download_results %>% 
+  filter(status == "empty_file") %>% 
+  left_join(wi_stations, by = "station_id") %>% 
+  glimpse()
+
+write_csv(download_results, "download_results.csv")
 ```
 I stopped after the text, I need to see why the dissoved oxygen is not returning that i has values when it does, likely just becuase the columns are called something else. I also want to see if there is a way to get these to row bind without me needing to stich them gogether later
+
+
+
+
+
+################################################################################
+Below directly uses the shiny app and is much slower
+# Function for extracting
+
+This uses a headless browser to basically open the webpage, navigate to a station webpage and download the data. The shiny app can be super slow (sometimes taking over 2 min to open for a lake). If 180 seconds is too slow to have the lake page open (download disabled remains TRUE), you may have to increase the time so that it allows the webpage to open properly. 
+```{r}
+download_station_profile <- function(
+    station_id,
+    b,
+    download_dir = tempdir(),
+    load_timeout = 250,
+    download_timeout = 60
+) {
+
+  message("\nStarting station: ", station_id)
+
+  # Build station URL
+  url <- paste0(
+    "https://dnr-wisconsin.shinyapps.io/WaterExplorer/?stationid=",
+    station_id
+  )
+
+  # Navigate to station
+  b$Page$navigate(url)
+
+  # Wait for station data to load
+  button_enabled <- FALSE
+
+  for (i in seq_len(ceiling(load_timeout / 5))) {
+
+    Sys.sleep(5)
+
+    button_disabled <- b$Runtime$evaluate(
+      "document.querySelector('#DLRawProfData')
+        ?.classList.contains('disabled')",
+      returnByValue = TRUE
+    )$result$value
+
+    elapsed <- i * 5
+
+    message(
+      "Station ", station_id,
+      " | Elapsed: ", elapsed,
+      " seconds | Download disabled: ", button_disabled
+    )
+
+    if (identical(button_disabled, FALSE)) {
+      button_enabled <- TRUE
+      break
+    }
+  }
+
+  if (!button_enabled) {
+    stop("Station ", station_id, " did not finish loading.")
+  }
+
+  # Extract download URL
+  download_url <- b$Runtime$evaluate(
+    "document.querySelector('#DLRawProfData').href",
+    returnByValue = TRUE
+  )$result$value
+
+  if (is.null(download_url) || !nzchar(download_url)) {
+    stop("Could not find download URL for station ", station_id)
+  }
+
+  # Expected download filename
+  file_path <- file.path(
+    download_dir,
+    paste0(station_id, "_profile.csv")
+  )
+
+  # Remove an old download if one exists
+  if (file.exists(file_path)) {
+    unlink(file_path)
+  }
+
+  # Initiate download
+  b$Page$navigate(download_url)
+
+  # Wait for CSV to finish downloading
+  download_complete <- FALSE
+
+  for (i in seq_len(ceiling(download_timeout))) {
+
+    Sys.sleep(1)
+
+    if (
+      file.exists(file_path) &&
+      !file.exists(paste0(file_path, ".crdownload"))
+    ) {
+      download_complete <- TRUE
+      break
+    }
+  }
+
+  if (!download_complete) {
+    stop("Download failed or timed out for station ", station_id)
+  }
+
+  # Read data and add station ID
+  profile_data <- read_csv(
+    file_path,
+    show_col_types = FALSE
+  ) %>%
+    mutate(station_id = station_id)
+
+  message(
+    "Successfully downloaded station ",
+    station_id,
+    " (", nrow(profile_data), " rows)"
+  )
+
+  return(profile_data)
+}
+```
+
+# run for lakes 
+```{r}
+station_ids <- c(133318, 613121)
+
+# Start browser session
+b <- ChromoteSession$new()
+
+# Set download behavior BEFORE downloading
+b$Browser$setDownloadBehavior(
+  behavior = "allow",
+  downloadPath = tempdir()
+)
+
+# Download each station
+profile_list <- lapply(
+  station_ids,
+  download_station_profile,
+  b = b
+)
+
+# Combine into one dataframe
+all_profiles <- bind_rows(
+  lapply(profile_list, function(x) {
+    x %>%
+      mutate(
+        `DISSOLVED OXYGEN FIELD` =
+          as.character(`DISSOLVED OXYGEN FIELD`)
+      )
+  })
+)
+
+# Close browser
+b$close()
+
+glimpse(all_profiles)
+
+# Number of records per station
+all_profiles %>%
+  count(station_id)
+
+# Check downloaded files
+list.files(
+  tempdir(),
+  pattern = "profile\\.csv$",
+  full.names = TRUE
+)
+```
