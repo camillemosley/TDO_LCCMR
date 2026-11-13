@@ -1,0 +1,68 @@
+---
+title: "QA_QC"
+author: "Denver Link"
+date: "2026-11-05"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Library 
+
+```{r}
+library(tidyverse)
+library(mnsentinellakes)
+```
+
+# If you don't have mnsentinellakes
+```{r}
+# install.packages(“devtools”)
+# devtools::install_github(“mnsentinellakes/mnsentinellakes”)
+```
+*uncomment run lines, load package*
+
+# Data
+MiniDot data are stored as daily .txt files, we will need to get all of these into one nice csv per logger
+```{r}
+#this directory should be pointed to a parent folder that includes all sensors from a lake 
+do.directory <- file.path(
+  "D:",
+  "Shared drives",
+  "Hansen Lab",
+  "RESEARCH PROJECTS",
+  "LCCMR Coldwater Habitat Watersheds - MM",
+  "Data",
+  "TDO sensors",
+  "Hansen",
+  "Raw Data",
+  "Sensor Data Fall 2026",
+  "Black Bear",
+  "20260903"
+)
+#let's see what files are in here
+list.files(do.directory, recursive = F)
+#recursive makes sure that we don't include the parent file name
+
+#now lets make paths to each of the sensor folders
+do.folders <- list.dirs(do.directory,
+                        recursive = F,
+                        full.names = T)
+#don't include the file where we will store compiled data
+do.folders <- do.folders[
+  basename(do.folders) != "compile"
+]
+do.folders <- do.folders[basename(do.folders) != "cat_files"]
+#check to see if we have the folders we want to compile
+do.folders
+
+# run the function for compiling for all folder and save into the compile folder
+for (i in do.folders) {
+
+  compile_do_folder(
+    folderpath = i,
+    savetofolder = file.path(do.directory, "compile")
+  )
+
+}
+```
+
