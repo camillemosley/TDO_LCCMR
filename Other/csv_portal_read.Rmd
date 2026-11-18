@@ -1,0 +1,641 @@
+---
+title: "CSV_Portal_read"
+author: "Denver Link"
+date: "2026-11-12"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Library
+
+```{r}
+library(tidyverse)
+library(chromote)
+library(readr)
+library(rvest)
+library(xml2)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(readxl)
+library(httr2)
+library(tibble)
+```
+
+# Looking at this link: 
+https://apps.dnr.wi.gov/lakes/waterquality/
+```{r}
+home_url <- "https://apps.dnr.wi.gov/lakes/waterquality/"
+
+# Read the main page
+home_page <- read_html(home_url)
+
+# Extract county links
+county_nodes <- home_page %>%
+  html_elements("a")
+
+county_links <- tibble(
+  county = html_text2(county_nodes),
+  href = html_attr(county_nodes, "href")
+) %>%
+  filter(
+    !is.na(href),
+    str_detect(href, "Stations\\.aspx\\?location=")
+  ) %>%
+  mutate(
+    county_url = url_absolute(href, home_url)
+  ) %>%
+  distinct(county_url, .keep_all = TRUE)
+
+# Inspect results
+print(county_links)
+nrow(county_links)
+
+get_county_stations <- function(county_url, county, b,
+                                load_timeout = 60,
+                                page_timeout = 30) {
+
+  county <- stringr::str_trim(county)
+
+  message("\nStarting: ", county)
+
+  b$Page$navigate(county_url)
+
+  # Wait for the station table to appear
+  table_loaded <- FALSE
+
+  for (i in seq_len(load_timeout)) {
+    Sys.sleep(1)
+
+    table_loaded <- b$Runtime$evaluate(
+      "!!document.querySelector(
+        '#ctl00_ctl00_LeftPageContent_gvStationTable'
+      )",
+      returnByValue = TRUE
+    )$result$value
+
+    if (isTRUE(table_loaded)) {
+      break
+    }
+  }
+
+  if (!isTRUE(table_loaded)) {
+    warning("Could not load station table for ", county)
+    return(tibble::tibble())
+  }
+
+  all_stations <- list()
+
+  repeat {
+
+    # Get current page and total pages
+    page_info <- b$Runtime$evaluate(
+      "(() => {
+        const txt = document.querySelector(
+          '#ctl00_ctl00_LeftPageContent_gvStationTable'
+        ).innerText;
+
+        const m = txt.match(/Page\\s+(\\d+)\\s+of\\s+(\\d+)/);
+
+        return m ? {current: Number(m[1]), total: Number(m[2])} : null;
+      })()",
+      returnByValue = TRUE
+    )$result$value
+
+    if (is.null(page_info)) break
+
+    current_page <- page_info$current
+    total_pages <- page_info$total
+
+    message("  Page ", current_page, " of ", total_pages)
+
+    # Extract station records
+    station_rows <- b$Runtime$evaluate(
+      "Array.from(
+        document.querySelectorAll(
+          '#ctl00_ctl00_LeftPageContent_gvStationTable tr'
+        )
+      )
+      .map(row => Array.from(row.querySelectorAll('td'))
+        .map(cell => cell.innerText.trim())
+      )
+      .filter(row => row.length === 5)",
+      returnByValue = TRUE
+    )$result$value
+
+    if (length(station_rows) > 0) {
+
+      all_stations[[current_page]] <- purrr::map_dfr(
+        station_rows,
+        ~ tibble::tibble(
+          station_name = .x[[1]],
+          station_id = .x[[2]],
+          most_recent_data = .x[[4]]
+        )
+      )
+    }
+
+    if (current_page >= total_pages) break
+
+    # Click Next
+    b$Runtime$evaluate(
+      "document.querySelector(
+        '#ctl00_ctl00_LeftPageContent_gvStationTable_ctl01_LinkButton3'
+      ).click()",
+      returnByValue = TRUE
+    )
+
+    # Wait until the page number changes
+    page_changed <- FALSE
+
+    for (i in seq_len(page_timeout)) {
+      Sys.sleep(1)
+
+      new_page <- b$Runtime$evaluate(
+        "(() => {
+          const txt = document.querySelector(
+            '#ctl00_ctl00_LeftPageContent_gvStationTable'
+          ).innerText;
+
+          const m = txt.match(/Page\\s+(\\d+)\\s+of\\s+(\\d+)/);
+
+          return m ? Number(m[1]) : null;
+        })()",
+        returnByValue = TRUE
+      )$result$value
+
+      if (!is.null(new_page) &&
+          as.numeric(new_page) == current_page + 1) {
+        page_changed <- TRUE
+        break
+      }
+    }
+
+    if (!page_changed) {
+      warning("Pagination failed for ", county,
+              " on page ", current_page)
+      break
+    }
+  }
+
+  dplyr::bind_rows(all_stations) %>%
+    dplyr::mutate(county = county, .before = 1)
+}
+
+b <- ChromoteSession$new()
+
+adams_test <- get_county_stations(
+  county_url = county_links$county_url[1],
+  county = county_links$county[1],
+  b = b
+)
+
+glimpse(adams_test)
+nrow(adams_test)
+
+# Start browser
+county_station_list <- purrr::map2(
+  county_links$county_url,
+  county_links$county,
+  ~ get_county_stations(
+    county_url = .x,
+    county = .y,
+    b = b
+  )
+)
+
+# Combine all counties
+wi_stations <- dplyr::bind_rows(county_station_list)
+
+# Clean and verify
+wi_stations <- wi_stations %>%
+  mutate(
+    county = stringr::str_trim(county),
+    station_id = as.character(station_id)
+  ) %>%
+  distinct(county, station_id, .keep_all = TRUE)
+
+# Summary
+glimpse(wi_stations)
+
+nrow(wi_stations)
+n_distinct(wi_stations$station_id)
+count(wi_stations, county, sort = TRUE)
+
+# Save inventory
+readr::write_csv(
+  wi_stations,
+  "WI_DNR_Statewide_Station_Inventory.csv"
+)
+
+wi_stations <- read_csv("WI_DNR_Statewide_Station_Inventory.csv")
+
+###########################################################################
+#now look for useable data
+
+check_station_download <- function(
+    station_id,
+    download_dir = "WI_DNR_Raw_Profile_Data"
+) {
+
+  station_id <- as.character(station_id)
+
+  dir.create(
+    download_dir,
+    showWarnings = FALSE,
+    recursive = TRUE
+  )
+
+  url <- paste0(
+    "https://apps.dnr.wi.gov/swims/LakesReport/DownloadTemperatureReport?stationId=",
+    station_id
+  )
+
+  message("Checking station: ", station_id)
+
+  # Request the download
+  response <- tryCatch({
+
+    request(url) %>%
+      req_user_agent("Mozilla/5.0") %>%
+      req_timeout(60) %>%
+      req_perform()
+
+  }, error = function(e) e)
+
+  # Handle request failures
+  if (inherits(response, "error")) {
+    return(tibble(
+      station_id = station_id,
+      status = "request_failed",
+      http_status = NA_integer_,
+      n_records = NA_integer_,
+      has_temperature = NA,
+      has_dissolved_oxygen = NA,
+      file_path = NA_character_,
+      columns = NA_character_,
+      message = conditionMessage(response)
+    ))
+  }
+
+  http_status <- resp_status(response)
+  content_type <- resp_header(response, "content-type")
+  file_raw <- resp_body_raw(response)
+
+  # Handle HTTP errors
+  if (http_status != 200 || length(file_raw) == 0) {
+    return(tibble(
+      station_id = station_id,
+      status = "http_error_or_empty_response",
+      http_status = http_status,
+      n_records = NA_integer_,
+      has_temperature = NA,
+      has_dissolved_oxygen = NA,
+      file_path = NA_character_,
+      columns = NA_character_,
+      message = content_type
+    ))
+  }
+
+  # Identify the file format
+  is_xlsx <- length(file_raw) >= 2 &&
+    identical(as.integer(file_raw[1:2]), c(80L, 75L))
+
+  is_xls <- length(file_raw) >= 8 &&
+    identical(
+      as.integer(file_raw[1:8]),
+      c(208L, 207L, 17L, 224L, 161L, 177L, 26L, 225L)
+    )
+
+  # Check for an HTML response instead of a data file
+  if (!is_xlsx && !is_xls) {
+
+  preview <- rawToChar(
+    file_raw[seq_len(min(length(file_raw), 1000))]
+  )
+
+  is_html <- grepl(
+    "<!doctype html|<html|<body",
+    preview,
+    ignore.case = TRUE
+  )
+
+} else {
+  is_html <- FALSE
+}
+
+  if (is_html) {
+    return(tibble(
+      station_id = station_id,
+      status = "html_response",
+      http_status = http_status,
+      n_records = NA_integer_,
+      has_temperature = NA,
+      has_dissolved_oxygen = NA,
+      file_path = NA_character_,
+      columns = NA_character_,
+      message = substr(preview, 1, 250)
+    ))
+  }
+
+  if (is_xlsx) {
+    extension <- ".xlsx"
+  } else if (is_xls) {
+    extension <- ".xls"
+  } else {
+    extension <- ".csv"
+  }
+
+  file_path <- file.path(
+    download_dir,
+    paste0(station_id, "_temperature_report", extension)
+  )
+
+  writeBin(file_raw, file_path)
+
+  # Read the downloaded file
+  profile_data <- tryCatch({
+
+    if (is_xlsx || is_xls) {
+      read_excel(file_path, col_types = "text")
+    } else {
+      read_csv(
+        file_path,
+        col_types = cols(.default = col_character()),
+        show_col_types = FALSE,
+        progress = FALSE
+      )
+    }
+
+  }, error = function(e) e)
+
+  if (inherits(profile_data, "error")) {
+    return(tibble(
+      station_id = station_id,
+      status = "file_parse_failed",
+      http_status = http_status,
+      n_records = NA_integer_,
+      has_temperature = NA,
+      has_dissolved_oxygen = NA,
+      file_path = file_path,
+      columns = NA_character_,
+      message = conditionMessage(profile_data)
+    ))
+  }
+
+  # Inspect column names for temperature and dissolved oxygen
+  column_names <- names(profile_data)
+
+# Check whether columns exist
+has_temp <- any(
+  str_detect(
+    column_names,
+    regex("temperature", ignore_case = TRUE)
+  )
+)
+
+has_do <- any(
+  str_detect(
+    column_names,
+    regex("dissox|dissolved.?oxygen", ignore_case = TRUE)
+  )
+)
+
+# Check whether actual measurements exist
+has_temp_data <- if (has_temp) {
+  any(!is.na(profile_data$Temperature) &
+        str_trim(profile_data$Temperature) != "")
+} else {
+  FALSE
+}
+
+has_do_data <- if (has_do) {
+  any(!is.na(profile_data$Dissox) &
+        str_trim(profile_data$Dissox) != "")
+} else {
+  FALSE
+}
+
+n_records <- nrow(profile_data)
+
+tibble(
+  station_id = station_id,
+  status = if (n_records > 0) "downloaded" else "empty_file",
+  http_status = http_status,
+  n_records = n_records,
+  has_temperature = has_temp,
+  has_dissolved_oxygen = has_do,
+  has_temperature_data = has_temp_data,
+  has_dissolved_oxygen_data = has_do_data,
+  file_path = file_path,
+  columns = paste(column_names, collapse = "; "),
+  message = content_type
+)
+}
+
+station_ids <- unique(wi_stations$station_id)
+
+download_results <- map_dfr(
+  station_ids,
+  function(id) {
+
+    result <- check_station_download(id)
+
+    Sys.sleep(0.25)
+
+    result
+  }
+)
+
+download_results %>%
+  count(status)
+
+download_results %>%
+  filter(status == "downloaded") %>%
+  summarise(
+    stations_downloaded = n(),
+    stations_with_temperature = sum(has_temperature_data),
+    stations_with_dissolved_oxygen = sum(has_dissolved_oxygen_data),
+    stations_with_both = sum(
+      has_temperature_data & has_dissolved_oxygen_data
+    )
+  )
+
+download_results %>% 
+  filter(status == "empty_file") %>% 
+  left_join(wi_stations, by = "station_id") %>% 
+  glimpse()
+
+write_csv(download_results, "download_results.csv")
+```
+I stopped after the text, I need to see why the dissoved oxygen is not returning that i has values when it does, likely just becuase the columns are called something else. I also want to see if there is a way to get these to row bind without me needing to stich them gogether later
+
+
+
+
+
+################################################################################
+Below directly uses the shiny app and is much slower
+# Function for extracting
+
+This uses a headless browser to basically open the webpage, navigate to a station webpage and download the data. The shiny app can be super slow (sometimes taking over 2 min to open for a lake). If 180 seconds is too slow to have the lake page open (download disabled remains TRUE), you may have to increase the time so that it allows the webpage to open properly. 
+```{r}
+download_station_profile <- function(
+    station_id,
+    b,
+    download_dir = tempdir(),
+    load_timeout = 250,
+    download_timeout = 60
+) {
+
+  message("\nStarting station: ", station_id)
+
+  # Build station URL
+  url <- paste0(
+    "https://dnr-wisconsin.shinyapps.io/WaterExplorer/?stationid=",
+    station_id
+  )
+
+  # Navigate to station
+  b$Page$navigate(url)
+
+  # Wait for station data to load
+  button_enabled <- FALSE
+
+  for (i in seq_len(ceiling(load_timeout / 5))) {
+
+    Sys.sleep(5)
+
+    button_disabled <- b$Runtime$evaluate(
+      "document.querySelector('#DLRawProfData')
+        ?.classList.contains('disabled')",
+      returnByValue = TRUE
+    )$result$value
+
+    elapsed <- i * 5
+
+    message(
+      "Station ", station_id,
+      " | Elapsed: ", elapsed,
+      " seconds | Download disabled: ", button_disabled
+    )
+
+    if (identical(button_disabled, FALSE)) {
+      button_enabled <- TRUE
+      break
+    }
+  }
+
+  if (!button_enabled) {
+    stop("Station ", station_id, " did not finish loading.")
+  }
+
+  # Extract download URL
+  download_url <- b$Runtime$evaluate(
+    "document.querySelector('#DLRawProfData').href",
+    returnByValue = TRUE
+  )$result$value
+
+  if (is.null(download_url) || !nzchar(download_url)) {
+    stop("Could not find download URL for station ", station_id)
+  }
+
+  # Expected download filename
+  file_path <- file.path(
+    download_dir,
+    paste0(station_id, "_profile.csv")
+  )
+
+  # Remove an old download if one exists
+  if (file.exists(file_path)) {
+    unlink(file_path)
+  }
+
+  # Initiate download
+  b$Page$navigate(download_url)
+
+  # Wait for CSV to finish downloading
+  download_complete <- FALSE
+
+  for (i in seq_len(ceiling(download_timeout))) {
+
+    Sys.sleep(1)
+
+    if (
+      file.exists(file_path) &&
+      !file.exists(paste0(file_path, ".crdownload"))
+    ) {
+      download_complete <- TRUE
+      break
+    }
+  }
+
+  if (!download_complete) {
+    stop("Download failed or timed out for station ", station_id)
+  }
+
+  # Read data and add station ID
+  profile_data <- read_csv(
+    file_path,
+    show_col_types = FALSE
+  ) %>%
+    mutate(station_id = station_id)
+
+  message(
+    "Successfully downloaded station ",
+    station_id,
+    " (", nrow(profile_data), " rows)"
+  )
+
+  return(profile_data)
+}
+```
+
+# run for lakes 
+```{r}
+station_ids <- c(133318, 613121)
+
+# Start browser session
+b <- ChromoteSession$new()
+
+# Set download behavior BEFORE downloading
+b$Browser$setDownloadBehavior(
+  behavior = "allow",
+  downloadPath = tempdir()
+)
+
+# Download each station
+profile_list <- lapply(
+  station_ids,
+  download_station_profile,
+  b = b
+)
+
+# Combine into one dataframe
+all_profiles <- bind_rows(
+  lapply(profile_list, function(x) {
+    x %>%
+      mutate(
+        `DISSOLVED OXYGEN FIELD` =
+          as.character(`DISSOLVED OXYGEN FIELD`)
+      )
+  })
+)
+
+# Close browser
+b$close()
+
+glimpse(all_profiles)
+
+# Number of records per station
+all_profiles %>%
+  count(station_id)
+
+# Check downloaded files
+list.files(
+  tempdir(),
+  pattern = "profile\\.csv$",
+  full.names = TRUE
+)
+```
